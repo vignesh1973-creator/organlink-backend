@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "OrganLink - Decentralized Organ Donation Platform Backend",
   "main": "index.ts",
-  "type": "module",
+  
   "scripts": {
     "dev": "tsx watch index.ts",
     "build": "tsc",
