@@ -3,7 +3,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
-import { handleDemo } from "./routes/demo";
+import { handleDemo } from "./routes/demo.ts";
 import adminAuthRoutes from "./routes/admin-auth";
 import hospitalRoutes from "./routes/hospitals";
 import organizationRoutes from "./routes/organizations";
