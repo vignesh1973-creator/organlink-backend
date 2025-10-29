@@ -1,0 +1,51 @@
+# Copy and paste these environment variables into Render.com when deploying your backend
+# =====================================================================================
+
+# Server Configuration
+PORT=5000
+
+# Database Configuration (Your Neon PostgreSQL Database)
+DATABASE_URL=postgresql://builder-organlink_owner:OO4N4qwk9i7f@ep-patient-river-a5ijfzqc.us-east-2.aws.neon.tech/builder-organlink?sslmode=require
+
+# Authentication
+JWT_SECRET=your-jwt-secret-key-change-this-for-production
+BCRYPT_ROUNDS=10
+ADMIN_EMAIL=admin@organlink.com
+ADMIN_PASSWORD=Admin@123
+
+# Blockchain Configuration (Ethereum Sepolia Testnet)
+INFURA_API_URL=https://sepolia.infura.io/v3/6587311a93fe4c34adcef72bd583ea46
+METAMASK_PRIVATE_KEY=3bd2be9a27a02febd7c8a21f4d73bc9fd5a57d7521b60c78fbe029c10331189d
+
+# Contract Addresses (Your Deployed Contracts on Sepolia)
+POLICY_CONTRACT_ADDRESS=0x43f973a6f01cd2003035a0ef9d4293a1c136413f
+ORGANLINK_REGISTRY_ADDRESS=0xb8f6306996a9fc8c03363191b5eb28a2d7a9a75b
+
+# IPFS Configuration (Pinata)
+PINATA_API_KEY=dfe8e62b58f24fe27b43
+PINATA_SECRET_KEY=fb0d85e7f96b97bc38c95cd09c59e9f7cd5d5ebc4db4fee84d28ab8ab93cabb8
+IPFS_API_URL=https://gateway.pinata.cloud/ipfs/
+
+# CORS Configuration
+CORS_ORIGIN=*
+
+# =====================================================================================
+# NOTES:
+# =====================================================================================
+# 
+# 1. IPFS_API_URL: This is the Pinata gateway URL used to retrieve files from IPFS.
+#    When you upload a file to Pinata, you get a CID (Content Identifier).
+#    To access the file, you use: https://gateway.pinata.cloud/ipfs/{CID}
+#
+# 2. Contract Addresses:
+#    - POLICY_CONTRACT_ADDRESS: Your OrgPolicyVoting.sol contract (voting/governance)
+#    - ORGANLINK_REGISTRY_ADDRESS: Your OrganLinkRegistry.sol contract (patient/donor records)
+#
+# 3. For Production on Render:
+#    - Change JWT_SECRET to a strong random string
+#    - Consider updating ADMIN_PASSWORD to something more secure
+#    - Update CORS_ORIGIN to your actual frontend URL on Vercel
+#
+# 4. Contract Transaction Hashes (for reference):
+#    - Registry Contract: 0x02414ed30cf04b749dcb2264351fa5ddaab909b469c26ac585bc1db94cf7af0c
+#    - Voting Contract: 0x34a96ba40ab2d50f02897337f1d90f9bf51cee26610145c265f26bbce86b75d3

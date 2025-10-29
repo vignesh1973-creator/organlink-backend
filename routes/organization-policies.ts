@@ -446,7 +446,7 @@ router.get("/dashboard-recent-activity", async (req: AuthRequest, res) => {
         p.title as action,
         CASE WHEN pv.vote THEN 'You voted YES' ELSE 'You voted NO' END as description,
         p.status as status,
-        pv.created_at as timestamp
+        p.created_at as timestamp
        FROM policy_votes pv
        JOIN policies p ON pv.policy_id = p.policy_id
        WHERE pv.organization_id = $1

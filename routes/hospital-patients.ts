@@ -5,6 +5,7 @@ import { authenticateHospital } from "../middleware/auth.js";
 import { blockchainService } from "../services/blockchain";
 import { ipfsService } from "../services/ipfs";
 import { ocrService } from "../services/ocr";
+import { aadhaarOCRService } from "../services/aadhaarOcr";
 
 const router = express.Router();
 
@@ -113,37 +114,121 @@ router.post("/register", upload.single('signature'), authenticateHospital, async
 
     console.log('Processing patient registration for:', full_name);
 
-    // Step 1: OCR Signature Verification
+    // Determine verification mode: Aadhaar or Signature
+    const verificationType = req.body.verification_type || 'signature'; // 'aadhaar' or 'signature'
     let ocrResult;
-    try {
-      console.log('Starting OCR verification...');
-      const extractedText = await ocrService.extractTextFromImage(req.file.buffer);
-      ocrResult = ocrService.verifySignatureNameEnhanced(extractedText, full_name);
-      
-      console.log('OCR verification result:', ocrResult);
-      
-      if (!ocrResult.match) {
-        return res.status(400).json({
-          success: false,
-          error: 'Signature verification failed',
-          details: {
-            extractedName: ocrResult.extractedName,
-            confidence: ocrResult.confidence,
-            strategies: ocrResult.strategies
+    let extractedPhoto = null;
+    let aadhaarData = null;
+
+    if (verificationType === 'aadhaar') {
+      // Step 1A: Aadhaar-based verification
+      console.log('Starting Aadhaar verification...');
+      try {
+        const aadhaarResult = await aadhaarOCRService.extractAadhaarData(req.file.buffer);
+        
+        if (!aadhaarResult.success || !aadhaarResult.data) {
+          return res.status(400).json({
+            success: false,
+            error: aadhaarResult.error || 'Could not extract data from Aadhaar card',
+            details: {
+              rawText: aadhaarResult.rawText,
+              confidence: aadhaarResult.confidence
+            }
+          });
+        }
+
+        aadhaarData = aadhaarResult.data;
+        console.log('Extracted Aadhaar data:', aadhaarData);
+
+        // Verify name match
+        const nameVerification = aadhaarOCRService.verifyNameMatch(aadhaarData.name, full_name);
+        console.log('Name verification:', nameVerification);
+
+        if (!nameVerification.match) {
+          // In development, allow bypass if OCR confidence is very low (likely OCR failure)
+          if (process.env.NODE_ENV === 'development' && nameVerification.confidence < 30) {
+            console.warn('⚠️ Low OCR confidence detected - allowing registration in development mode');
+            console.warn('Extracted:', aadhaarData.name, '| Provided:', full_name);
+            // Proceed with registration but mark as signature verification
+            ocrResult = {
+              match: true,
+              confidence: 50,
+              extractedName: full_name,
+              verificationType: 'signature', // Fall back to signature mode
+              note: 'Aadhaar OCR failed - proceeding with signature verification'
+            };
+            extractedPhoto = aadhaarData.photoBase64; // Still use photo if available
+          } else {
+            return res.status(400).json({
+              success: false,
+              error: 'Name does not match Aadhaar card',
+              details: {
+                extractedName: aadhaarData.name,
+                providedName: full_name,
+                confidence: nameVerification.confidence,
+                similarity: nameVerification.similarity,
+                suggestion: 'Please ensure Aadhaar image is clear and well-lit. Try uploading a better quality image or use Signature mode instead.'
+              }
+            });
           }
-        });
-      }
-    } catch (ocrError) {
-      console.error('OCR verification failed:', ocrError);
-      // In development, allow bypass for demo purposes
-      if (process.env.NODE_ENV === 'development') {
-        console.warn('OCR bypass enabled for development');
-        ocrResult = { match: true, confidence: 80, extractedName: full_name };
-      } else {
+        } else {
+          // Name matched successfully
+          // Extract profile photo
+          extractedPhoto = aadhaarData.photoBase64;
+
+          // Set OCR result for downstream processing
+          ocrResult = {
+            match: true,
+            confidence: nameVerification.confidence,
+            extractedName: aadhaarData.name,
+            verificationType: 'aadhaar',
+            aadhaarData: {
+              dateOfBirth: aadhaarData.dateOfBirth,
+              gender: aadhaarData.gender,
+              aadhaarNumber: aadhaarData.aadhaarNumber
+            }
+          };
+        }
+      } catch (aadhaarError) {
+        console.error('Aadhaar verification failed:', aadhaarError);
         return res.status(500).json({ 
           success: false, 
-          error: 'Signature verification service unavailable' 
+          error: 'Aadhaar verification service unavailable' 
         });
+      }
+    } else {
+      // Step 1B: Signature-based verification (original flow)
+      try {
+        console.log('Starting signature verification...');
+        const extractedText = await ocrService.extractTextFromImage(req.file.buffer);
+        ocrResult = ocrService.verifySignatureNameEnhanced(extractedText, full_name);
+        
+        console.log('OCR verification result:', ocrResult);
+        
+        if (!ocrResult.match) {
+          return res.status(400).json({
+            success: false,
+            error: 'Signature verification failed',
+            details: {
+              extractedName: ocrResult.extractedName,
+              confidence: ocrResult.confidence,
+              strategies: ocrResult.strategies
+            }
+          });
+        }
+        ocrResult.verificationType = 'signature';
+      } catch (ocrError) {
+        console.error('OCR verification failed:', ocrError);
+        // In development, allow bypass for demo purposes
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('OCR bypass enabled for development');
+          ocrResult = { match: true, confidence: 80, extractedName: full_name, verificationType: 'signature' };
+        } else {
+          return res.status(500).json({ 
+            success: false, 
+            error: 'Signature verification service unavailable' 
+          });
+        }
       }
     }
 
@@ -185,7 +270,9 @@ router.post("/register", upload.single('signature'), authenticateHospital, async
       blockchainHash = await blockchainService.addVerifiedRecord(
         patientHash, 
         hospital_name, 
-        ipfsCID
+        ipfsCID,
+        verificationType,  // 'signature' or 'aadhaar'
+        ocrResult.match    // OCR verification result
       );
       console.log('Blockchain record created:', blockchainHash);
     } catch (blockchainError) {

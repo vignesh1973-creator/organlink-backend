@@ -1,47 +1,6 @@
 import { ethers } from "ethers";
 
-// ABIs for deployed contracts
-const SIGNATURE_VERIFIER_ABI = [
-  {
-    inputs: [
-      { internalType: "bytes32", name: "docHash", type: "bytes32" },
-      { internalType: "string", name: "ipfsCid", type: "string" },
-      { internalType: "uint16", name: "ocrScoreBps", type: "uint16" },
-      { internalType: "bool", name: "verified", type: "bool" },
-    ],
-    name: "attestOcr",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [{ internalType: "bytes32", name: "docHash", type: "bytes32" }],
-    name: "getLatest",
-    outputs: [
-      {
-        components: [
-          { internalType: "bytes32", name: "docHash", type: "bytes32" },
-          { internalType: "string", name: "ipfsCid", type: "string" },
-          { internalType: "bool", name: "ocrVerified", type: "bool" },
-          { internalType: "uint16", name: "ocrScoreBps", type: "uint16" },
-          { internalType: "bool", name: "sigVerified", type: "bool" },
-          { internalType: "address", name: "claimedSigner", type: "address" },
-          { internalType: "uint8", name: "status", type: "uint8" },
-          { internalType: "uint48", name: "attestedAt", type: "uint48" },
-          { internalType: "address", name: "attestedBy", type: "address" },
-          { internalType: "uint32", name: "version", type: "uint32" },
-        ],
-        internalType: "struct OrganLinkSignatureVerifier.Record",
-        name: "",
-        type: "tuple",
-      },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-];
-
-// OrganLink Registry ABI
+// OrganLink Registry ABI (OrganLinkRegistry.sol) - Enhanced with Aadhaar + OCR verification
 const ORGANLINK_REGISTRY_ABI = [
   {
     "inputs": [],
@@ -59,6 +18,16 @@ const ORGANLINK_REGISTRY_ABI = [
         "internalType": "string",
         "name": "_hospitalName",
         "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "_verificationType",
+        "type": "string"
+      },
+      {
+        "internalType": "bool",
+        "name": "_ocrVerified",
+        "type": "bool"
       },
       {
         "internalType": "string",
@@ -93,6 +62,16 @@ const ORGANLINK_REGISTRY_ABI = [
       },
       {
         "internalType": "string",
+        "name": "verificationType",
+        "type": "string"
+      },
+      {
+        "internalType": "bool",
+        "name": "ocrVerified",
+        "type": "bool"
+      },
+      {
+        "internalType": "string",
         "name": "ipfsCID",
         "type": "string"
       },
@@ -119,6 +98,32 @@ const ORGANLINK_REGISTRY_ABI = [
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "admin",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newAdmin",
+        "type": "address"
+      }
+    ],
+    "name": "changeAdmin",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "anonymous": false,
     "inputs": [
       {
@@ -128,7 +133,7 @@ const ORGANLINK_REGISTRY_ABI = [
         "type": "uint256"
       },
       {
-        "indexed": false,
+        "indexed": true,
         "internalType": "bytes32",
         "name": "patientHash",
         "type": "bytes32"
@@ -138,6 +143,18 @@ const ORGANLINK_REGISTRY_ABI = [
         "internalType": "string",
         "name": "hospitalName",
         "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "verificationType",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "ocrVerified",
+        "type": "bool"
       },
       {
         "indexed": false,
@@ -157,92 +174,88 @@ const ORGANLINK_REGISTRY_ABI = [
   }
 ];
 
+// ABI for OrgPolicyVoting.sol
 const POLICY_ABI = [
   {
-    inputs: [
-      { internalType: "string", name: "name", type: "string" },
-      { internalType: "address", name: "manager", type: "address" },
-    ],
-    name: "createOrganization",
-    outputs: [{ internalType: "uint256", name: "orgId", type: "uint256" }],
+    inputs: [],
     stateMutability: "nonpayable",
-    type: "function",
+    type: "constructor",
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: "address", name: "orgAddress", type: "address" },
+      { indexed: false, internalType: "string", name: "name", type: "string" },
+    ],
+    name: "OrganizationAdded",
+    type: "event",
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: "uint256", name: "policyId", type: "uint256" },
+      { indexed: false, internalType: "string", name: "title", type: "string" },
+    ],
+    name: "PolicyApproved",
+    type: "event",
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: "uint256", name: "policyId", type: "uint256" },
+      { indexed: false, internalType: "string", name: "title", type: "string" },
+      { indexed: false, internalType: "address", name: "proposer", type: "address" },
+    ],
+    name: "PolicyProposed",
+    type: "event",
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: "uint256", name: "policyId", type: "uint256" },
+      { indexed: false, internalType: "address", name: "voter", type: "address" },
+      { indexed: false, internalType: "bool", name: "vote", type: "bool" },
+    ],
+    name: "Voted",
+    type: "event",
   },
   {
     inputs: [
-      { internalType: "uint256", name: "orgId", type: "uint256" },
-      { internalType: "bool", name: "active", type: "bool" },
+      { internalType: "address", name: "_orgAddress", type: "address" },
+      { internalType: "string", name: "_name", type: "string" },
     ],
-    name: "setOrganizationActive",
+    name: "addOrganization",
     outputs: [],
     stateMutability: "nonpayable",
     type: "function",
   },
   {
-    inputs: [
-      { internalType: "uint256", name: "proposerOrgId", type: "uint256" },
-      { internalType: "string", name: "ipfsCid", type: "string" },
-      { internalType: "uint48", name: "startTime", type: "uint48" },
-      { internalType: "uint48", name: "endTime", type: "uint48" },
-    ],
-    name: "createProposalOnBehalf",
-    outputs: [{ internalType: "uint256", name: "proposalId", type: "uint256" }],
-    stateMutability: "nonpayable",
+    inputs: [],
+    name: "admin",
+    outputs: [{ internalType: "address", name: "", type: "address" }],
+    stateMutability: "view",
     type: "function",
   },
   {
-    inputs: [
-      { internalType: "uint256", name: "proposalId", type: "uint256" },
-      { internalType: "uint256", name: "voterOrgId", type: "uint256" },
-      { internalType: "uint8", name: "vote", type: "uint8" },
-    ],
-    name: "castVoteOnBehalf",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [{ internalType: "uint256", name: "proposalId", type: "uint256" }],
-    name: "finalize",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [{ internalType: "uint256", name: "proposalId", type: "uint256" }],
-    name: "getProposal",
+    inputs: [{ internalType: "uint256", name: "_policyId", type: "uint256" }],
+    name: "getPolicy",
     outputs: [
-      {
-        components: [
-          { internalType: "uint256", name: "id", type: "uint256" },
-          { internalType: "uint256", name: "proposerOrgId", type: "uint256" },
-          { internalType: "string", name: "ipfsCid", type: "string" },
-          { internalType: "uint48", name: "startTime", type: "uint48" },
-          { internalType: "uint48", name: "endTime", type: "uint48" },
-          { internalType: "uint8", name: "status", type: "uint8" },
-          { internalType: "uint32", name: "eligibleCount", type: "uint32" },
-          { internalType: "uint32", name: "forVotes", type: "uint32" },
-          { internalType: "uint32", name: "againstVotes", type: "uint32" },
-          { internalType: "uint32", name: "abstainVotes", type: "uint32" },
-          { internalType: "bool", name: "passed", type: "bool" },
-        ],
-        internalType: "struct OrganLinkPolicyByOrganization.Proposal",
-        name: "",
-        type: "tuple",
-      },
+      { internalType: "uint256", name: "id", type: "uint256" },
+      { internalType: "string", name: "title", type: "string" },
+      { internalType: "string", name: "description", type: "string" },
+      { internalType: "address", name: "proposer", type: "address" },
+      { internalType: "uint256", name: "yesVotes", type: "uint256" },
+      { internalType: "uint256", name: "noVotes", type: "uint256" },
+      { internalType: "bool", name: "isActive", type: "bool" },
+      { internalType: "bool", name: "isApproved", type: "bool" },
     ],
     stateMutability: "view",
     type: "function",
   },
   {
-    inputs: [{ internalType: "uint256", name: "proposalId", type: "uint256" }],
-    name: "getTally",
-    outputs: [
-      { internalType: "uint32", name: "forVotes", type: "uint32" },
-      { internalType: "uint32", name: "againstVotes", type: "uint32" },
-      { internalType: "uint32", name: "abstainVotes", type: "uint32" },
-      { internalType: "uint32", name: "eligibleCount", type: "uint32" },
-    ],
+    inputs: [],
+    name: "getTotalPolicies",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
     stateMutability: "view",
     type: "function",
   },
@@ -253,12 +266,49 @@ const POLICY_ABI = [
     stateMutability: "view",
     type: "function",
   },
+  {
+    inputs: [{ internalType: "address", name: "", type: "address" }],
+    name: "organizations",
+    outputs: [
+      { internalType: "string", name: "name", type: "string" },
+      { internalType: "address", name: "orgAddress", type: "address" },
+      { internalType: "bool", name: "isRegistered", type: "bool" },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "policyCount",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "string", name: "_title", type: "string" },
+      { internalType: "string", name: "_description", type: "string" },
+    ],
+    name: "proposePolicy",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "uint256", name: "_policyId", type: "uint256" },
+      { internalType: "bool", name: "_vote", type: "bool" },
+    ],
+    name: "votePolicy",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
 ];
 
 export class BlockchainService {
   private provider: ethers.JsonRpcProvider;
   private wallet: ethers.Wallet;
-  private signatureVerifier: ethers.Contract;
   private policyContract: ethers.Contract;
   private organLinkRegistry: ethers.Contract;
 
@@ -272,19 +322,10 @@ export class BlockchainService {
     const privateKey = process.env.METAMASK_PRIVATE_KEY || "";
     this.wallet = new ethers.Wallet(privateKey, this.provider);
 
-    // Contracts
-    const signatureAddress =
-      process.env.SIGNATURE_VERIFIER_ADDRESS ||
-      "0xac793b5fadbb6c5284e9fcc0bd25d770fb33439f";
+    // OrgPolicyVoting Contract
     const policyAddress =
       process.env.POLICY_CONTRACT_ADDRESS ||
-      "0xe84ef74ae1ec05e8650c2cd2b5e9579fec5c6c92";
-
-    this.signatureVerifier = new ethers.Contract(
-      signatureAddress,
-      SIGNATURE_VERIFIER_ABI,
-      this.wallet,
-    );
+      "0x43f973a6f01cd2003035a0ef9d4293a1c136413f";
 
     this.policyContract = new ethers.Contract(
       policyAddress,
@@ -292,10 +333,11 @@ export class BlockchainService {
       this.wallet,
     );
 
-    // OrganLink Registry Contract
+    // OrganLink Registry Contract (Enhanced with Aadhaar support + OCR verification)
+    // This contract combines registry AND signature verification functionality
     const registryAddress =
       process.env.ORGANLINK_REGISTRY_ADDRESS ||
-      "0x019a2e46ea0838f324986d1c428c3d78bf73cf71";
+      "0xFf0398328fc43d500536D03f3FEBCa0F66A528eC";
     
     this.organLinkRegistry = new ethers.Contract(
       registryAddress,
@@ -304,173 +346,60 @@ export class BlockchainService {
     );
   }
 
-  // ========== Signature Verifier ==========
-  async attestOcr(
-    docHash: string,
-    ipfsCid: string,
-    ocrScoreBps: number,
-    verified: boolean,
-  ): Promise<string> {
-    const tx = await this.signatureVerifier.attestOcr(
-      docHash,
-      ipfsCid,
-      ocrScoreBps,
-      verified,
-    );
-    const receipt = await tx.wait();
-    return receipt.hash as string;
-  }
-
-  async getLatest(docHash: string): Promise<any> {
-    return await this.signatureVerifier.getLatest(docHash);
-  }
-
-  // ========== Policy Governance ==========
-  async setOrganizationActive(orgId: number, active: boolean): Promise<string> {
-    const tx = await this.policyContract.setOrganizationActive(orgId, active);
-    const receipt = await tx.wait();
-    return receipt.hash as string;
-  }
-
-  async createProposalOnBehalf(
-    proposerOrgId: number,
-    ipfsCid: string,
-    startTime: number,
-    endTime: number,
-  ): Promise<{ txHash: string; proposalId: string }> {
-    const tx = await this.policyContract.createProposalOnBehalf(
-      proposerOrgId,
-      ipfsCid,
-      startTime,
-      endTime,
-    );
-    const receipt = await tx.wait();
-    const proposalId = await this.extractReturnValueFromReceipt(receipt);
-    return {
-      txHash: receipt.hash as string,
-      proposalId: String(proposalId ?? ""),
-    };
-  }
-
-  async castVoteOnBehalf(
-    proposalId: number,
-    voterOrgId: number,
-    vote: 1 | 2 | 3,
-  ): Promise<string> {
-    const tx = await this.policyContract.castVoteOnBehalf(
-      proposalId,
-      voterOrgId,
-      vote,
-    );
-    const receipt = await tx.wait();
-    return receipt.hash as string;
-  }
-
-  async finalize(proposalId: number): Promise<string> {
-    const tx = await this.policyContract.finalize(proposalId);
-    const receipt = await tx.wait();
-    return receipt.hash as string;
-  }
-
-  async getProposal(proposalId: number): Promise<any> {
-    return await this.policyContract.getProposal(proposalId);
-  }
-
-  async getTally(proposalId: number): Promise<{
-    forVotes: number;
-    againstVotes: number;
-    abstainVotes: number;
-    eligibleCount: number;
-  }> {
-    const [forVotes, againstVotes, abstainVotes, eligibleCount] =
-      await this.policyContract.getTally(proposalId);
-    return {
-      forVotes: Number(forVotes),
-      againstVotes: Number(againstVotes),
-      abstainVotes: Number(abstainVotes),
-      eligibleCount: Number(eligibleCount),
-    };
-  }
-
-  async createOrganization(orgId: number, name: string): Promise<{ txHash: string; blockchainOrgId?: number }> {
+  // ========== Policy Governance (OrgPolicyVoting.sol) ==========
+  
+  // Add organization to voting contract (admin only on contract side)
+  async addOrganization(orgAddress: string, name: string): Promise<string> {
     try {
-      console.log(`Creating/registering organization ${orgId} (${name}) on blockchain...`);
-      
-      // Call the contract function - it returns the orgId directly
-      const tx = await this.policyContract.createOrganization(name, this.wallet.address);
+      console.log(`Adding organization ${name} (${orgAddress}) to voting contract...`);
+      const tx = await this.policyContract.addOrganization(orgAddress, name);
       const receipt = await tx.wait();
-      console.log(`Organization registered: ${receipt.hash}`);
-      
-      // The createOrganization function returns the orgId
-      // Try multiple methods to extract it
-      let blockchainOrgId;
-      
-      // Method 1: Check events
-      if (receipt && receipt.logs && receipt.logs.length > 0) {
-        console.log(`Checking ${receipt.logs.length} logs for org ID...`);
-        try {
-          for (const log of receipt.logs) {
-            try {
-              const parsed = this.policyContract.interface.parseLog({
-                topics: [...log.topics],
-                data: log.data
-              });
-              
-              console.log(`Parsed log event: ${parsed?.name}`);
-              
-              if (parsed && parsed.args) {
-                // Check for orgId in different possible field names
-                if (parsed.args.orgId !== undefined) {
-                  blockchainOrgId = Number(parsed.args.orgId);
-                  console.log(`✅ Found blockchain org ID in event: ${blockchainOrgId}`);
-                  break;
-                } else if (parsed.args[0] !== undefined) {
-                  // Sometimes the first argument is the orgId
-                  blockchainOrgId = Number(parsed.args[0]);
-                  console.log(`✅ Found blockchain org ID in args[0]: ${blockchainOrgId}`);
-                  break;
-                }
-              }
-            } catch (parseError) {
-              // Skip logs that can't be parsed
-              continue;
-            }
-          }
-        } catch (e) {
-          console.warn('Error parsing logs:', e);
-        }
-      }
-      
-      // Method 2: If we still don't have an ID, query the contract
-      if (blockchainOrgId === undefined) {
-        console.log('Could not extract org ID from events, querying contract...');
-        try {
-          // Call a view function to get the org count (the newly created org should be the last one)
-          const orgCount = await this.policyContract.orgCount();
-          blockchainOrgId = Number(orgCount);
-          console.log(`✅ Using org count as ID: ${blockchainOrgId}`);
-        } catch (e) {
-          console.warn('Could not get org count from contract:', e);
-        }
-      }
-      
-      if (blockchainOrgId !== undefined) {
-        console.log(`🎯 Final blockchain org ID: ${blockchainOrgId}`);
-      } else {
-        console.warn('⚠️ Could not determine blockchain org ID');
-      }
-      
-      return { txHash: receipt.hash as string, blockchainOrgId };
+      console.log(`Organization added: ${receipt.hash}`);
+      return receipt.hash as string;
     } catch (error: any) {
-      // If organization already exists, that's okay - return the DB orgId to use
-      if (error.message?.includes('already exists') || error.message?.includes('Org exists')) {
-        console.log(`Organization ${orgId} already registered on blockchain, using DB ID`);
-        return { txHash: 'already_exists', blockchainOrgId: orgId };
+      if (error.message?.includes('Already registered')) {
+        console.log(`Organization ${name} already registered on blockchain`);
+        return 'already_exists';
       }
-      console.error('Error creating organization on blockchain:', error);
+      console.error('Error adding organization:', error);
       throw error;
     }
   }
+
+  // Propose a new policy
+  async proposePolicy(title: string, description: string): Promise<string> {
+    const tx = await this.policyContract.proposePolicy(title, description);
+    const receipt = await tx.wait();
+    return receipt.hash as string;
+  }
+
+  // Vote on a policy
+  async votePolicy(policyId: number, vote: boolean): Promise<string> {
+    const tx = await this.policyContract.votePolicy(policyId, vote);
+    const receipt = await tx.wait();
+    return receipt.hash as string;
+  }
+
+  // Get policy details
+  async getPolicy(policyId: number): Promise<any> {
+    return await this.policyContract.getPolicy(policyId);
+  }
+
+  // Get total policies count
+  async getTotalPolicies(): Promise<number> {
+    const count = await this.policyContract.getTotalPolicies();
+    return Number(count);
+  }
+
+  // Get organization count
+  async getOrgCount(): Promise<number> {
+    const count = await this.policyContract.orgCount();
+    return Number(count);
+  }
+
+  // ========== OCR Verification (via Registry Contract) ==========
+  // Note: OCR verification is now part of the addVerifiedRecord function
+  // The registry contract handles both record storage AND OCR verification
 
   // ========== OrganLink Registry ==========
   
@@ -480,24 +409,56 @@ export class BlockchainService {
     return ethers.keccak256(ethers.toUtf8Bytes(dataString));
   }
 
-  // Add a verified record to blockchain
-  async addVerifiedRecord(patientHash: string, hospitalName: string, ipfsCID: string): Promise<string> {
+  // Add a verified record to blockchain (enhanced with verification type)
+  async addVerifiedRecord(
+    patientHash: string, 
+    hospitalName: string, 
+    ipfsCID: string,
+    verificationType: string = 'signature',
+    ocrVerified: boolean = false
+  ): Promise<string> {
     try {
-      console.log('Adding record to blockchain:', { patientHash, hospitalName, ipfsCID });
+      console.log('Adding record to blockchain:', { 
+        patientHash, 
+        hospitalName, 
+        ipfsCID, 
+        verificationType, 
+        ocrVerified 
+      });
       
       // Validate inputs
       if (!patientHash || !hospitalName || !ipfsCID) {
         throw new Error('Missing required parameters for blockchain record');
       }
       
-      // Ensure parameters are strings
+      // Validate verification type
+      if (verificationType !== 'signature' && verificationType !== 'aadhaar') {
+        console.warn(`Invalid verification type: ${verificationType}, defaulting to 'signature'`);
+        verificationType = 'signature';
+      }
+      
+      // Ensure parameters are correct types
       const hashString = patientHash.toString();
       const nameString = hospitalName.toString();
+      const typeString = verificationType.toString();
+      const verifiedBool = Boolean(ocrVerified);
       const cidString = ipfsCID.toString();
       
-      console.log('Calling contract with:', { hashString, nameString, cidString });
+      console.log('Calling contract with:', { 
+        hashString, 
+        nameString, 
+        typeString, 
+        verifiedBool, 
+        cidString 
+      });
       
-      const tx = await this.organLinkRegistry.addVerifiedRecord(hashString, nameString, cidString);
+      const tx = await this.organLinkRegistry.addVerifiedRecord(
+        hashString, 
+        nameString, 
+        typeString,
+        verifiedBool,
+        cidString
+      );
       console.log('Transaction sent:', tx.hash);
       
       const receipt = await tx.wait();
@@ -510,7 +471,7 @@ export class BlockchainService {
       // For development, return a mock hash if blockchain fails
       if (process.env.NODE_ENV === 'development') {
         console.warn('Using mock blockchain hash for development');
-        const mockHash = `0x${'mock'.padEnd(64, '0')}`;
+        const mockHash = `0x${Date.now().toString(16).padEnd(64, '0')}`;
         return mockHash;
       }
       
@@ -518,10 +479,12 @@ export class BlockchainService {
     }
   }
 
-  // Get a record from blockchain
+  // Get a record from blockchain (enhanced with verification type)
   async getRegistryRecord(recordId: number): Promise<{
     patientHash: string;
     hospitalName: string;
+    verificationType: string;
+    ocrVerified: boolean;
     ipfsCID: string;
     timestamp: number;
   }> {
@@ -530,8 +493,10 @@ export class BlockchainService {
       return {
         patientHash: result[0],
         hospitalName: result[1],
-        ipfsCID: result[2],
-        timestamp: Number(result[3])
+        verificationType: result[2],
+        ocrVerified: result[3],
+        ipfsCID: result[4],
+        timestamp: Number(result[5])
       };
     } catch (error) {
       console.error('Error getting record:', error);

@@ -5,6 +5,7 @@ import { authenticateHospital } from "../middleware/auth.js";
 import { blockchainService } from "../services/blockchain";
 import { ipfsService } from "../services/ipfs";
 import { ocrService } from "../services/ocr";
+import { aadhaarOCRService } from "../services/aadhaarOcr";
 
 const router = express.Router();
 
@@ -124,37 +125,122 @@ router.post("/register", upload.single('signature'), authenticateHospital, async
     }
     console.log('Parsed organs:', parsedOrgans);
 
-    // Step 1: OCR Signature Verification
+    // Determine verification mode: Aadhaar or Signature
+    const verificationType = req.body.verification_type || 'signature'; // 'aadhaar' or 'signature'
+    const aadhaarLast4 = req.body.aadhaar_last4; // Last 4 digits provided by user
     let ocrResult;
-    try {
-      console.log('Starting OCR verification...');
-      const extractedText = await ocrService.extractTextFromImage(req.file.buffer);
-      ocrResult = ocrService.verifySignatureNameEnhanced(extractedText, full_name);
-      
-      console.log('OCR verification result:', ocrResult);
-      
-      if (!ocrResult.match) {
+    let extractedPhoto = null;
+    let aadhaarData = null;
+
+    if (verificationType === 'aadhaar') {
+      // Validate last 4 digits provided
+      if (!aadhaarLast4 || aadhaarLast4.length !== 4) {
         return res.status(400).json({
           success: false,
-          error: 'Signature verification failed',
-          details: {
-            extractedName: ocrResult.extractedName,
-            confidence: ocrResult.confidence,
-            strategies: ocrResult.strategies
-          }
+          error: 'Please provide the last 4 digits of your Aadhaar number'
         });
       }
-    } catch (ocrError) {
-      console.error('OCR verification failed:', ocrError);
-      // In development, allow bypass for demo purposes
-      if (process.env.NODE_ENV === 'development') {
-        console.warn('OCR bypass enabled for development');
-        ocrResult = { match: true, confidence: 80, extractedName: full_name };
-      } else {
+      // Step 1A: Aadhaar-based verification
+      console.log('Starting Aadhaar verification...');
+      try {
+        const aadhaarResult = await aadhaarOCRService.extractAadhaarData(req.file.buffer);
+        
+        if (!aadhaarResult.success || !aadhaarResult.data) {
+          return res.status(400).json({
+            success: false,
+            error: aadhaarResult.error || 'Could not extract data from Aadhaar card',
+            details: {
+              rawText: aadhaarResult.rawText,
+              confidence: aadhaarResult.confidence
+            }
+          });
+        }
+
+        aadhaarData = aadhaarResult.data;
+        console.log('Extracted Aadhaar data:', aadhaarData);
+
+        // Verify last 4 digits match
+        const extractedLast4 = aadhaarData.aadhaarNumber.slice(-4);
+        console.log(`Verifying Aadhaar: Provided last 4: ${aadhaarLast4}, Extracted last 4: ${extractedLast4}`);
+
+        if (extractedLast4 !== aadhaarLast4) {
+          // In development, allow bypass if OCR confidence is very low
+          if (process.env.NODE_ENV === 'development' && aadhaarResult.confidence < 30) {
+            console.warn('⚠️ Low OCR confidence detected - allowing registration in development mode');
+            console.warn(`Extracted last 4: ${extractedLast4} | Provided last 4: ${aadhaarLast4}`);
+            ocrResult = {
+              match: true,
+              confidence: 50,
+              extractedName: full_name,
+              verificationType: 'aadhaar',
+              note: 'Aadhaar OCR bypassed in development mode'
+            };
+          } else {
+            return res.status(400).json({
+              success: false,
+              error: 'Aadhaar last 4 digits do not match',
+              details: {
+                providedLast4: aadhaarLast4,
+                extractedLast4: extractedLast4,
+                suggestion: 'Please verify you entered the correct last 4 digits or use Signature mode instead.'
+              }
+            });
+          }
+        } else {
+          // Last 4 digits matched successfully
+          console.log('✅ Aadhaar last 4 digits verified successfully');
+          ocrResult = {
+            match: true,
+            confidence: 100, // Perfect match for digits
+            extractedName: full_name,
+            verificationType: 'aadhaar',
+            aadhaarData: {
+              dateOfBirth: aadhaarData.dateOfBirth,
+              gender: aadhaarData.gender,
+              aadhaarNumber: aadhaarData.aadhaarNumber
+            }
+          };
+        }
+      } catch (aadhaarError) {
+        console.error('Aadhaar verification failed:', aadhaarError);
         return res.status(500).json({ 
           success: false, 
-          error: 'Signature verification service unavailable' 
+          error: 'Aadhaar verification service unavailable' 
         });
+      }
+    } else {
+      // Step 1B: Signature-based verification (original flow)
+      try {
+        console.log('Starting signature verification...');
+        const extractedText = await ocrService.extractTextFromImage(req.file.buffer);
+        ocrResult = ocrService.verifySignatureNameEnhanced(extractedText, full_name);
+        
+        console.log('OCR verification result:', ocrResult);
+        
+        if (!ocrResult.match) {
+          return res.status(400).json({
+            success: false,
+            error: 'Signature verification failed',
+            details: {
+              extractedName: ocrResult.extractedName,
+              confidence: ocrResult.confidence,
+              strategies: ocrResult.strategies
+            }
+          });
+        }
+        ocrResult.verificationType = 'signature';
+      } catch (ocrError) {
+        console.error('OCR verification failed:', ocrError);
+        // In development, allow bypass for demo purposes
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('OCR bypass enabled for development');
+          ocrResult = { match: true, confidence: 80, extractedName: full_name, verificationType: 'signature' };
+        } else {
+          return res.status(500).json({ 
+            success: false, 
+            error: 'Signature verification service unavailable' 
+          });
+        }
       }
     }
 
@@ -195,7 +281,9 @@ router.post("/register", upload.single('signature'), authenticateHospital, async
       blockchainHash = await blockchainService.addVerifiedRecord(
         patientHash, 
         hospital_name, 
-        ipfsCID
+        ipfsCID,
+        verificationType,  // 'signature' or 'aadhaar'
+        ocrResult.match    // OCR verification result
       );
       console.log('Blockchain record created:', blockchainHash);
     } catch (blockchainError) {
